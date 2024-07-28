@@ -27,7 +27,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           UPLOAD_MODE: none
           ARCHIVE_TYPES: "tar.gz"
-          ARCHIVE_NAME: ${{ matrix.target }}
+          ARCHIVE_NAME: ${{ github.event.repository.name }}-${{ matrix.target }}
         with:
           RUSTTARGET: ${{ matrix.target }}
           EXTRA_FILES: "README.md LICENSE"
