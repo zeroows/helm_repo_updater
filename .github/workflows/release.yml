@@ -1,10 +1,10 @@
 name: Build and release
 on:
-  push:
-    tags:        
-      - '**'
-  # release:
-  #   types: [created]
+  # push:
+  #   tags:        
+  #     - '**'
+  release:
+    types: [published]
 
 jobs:
   release:
