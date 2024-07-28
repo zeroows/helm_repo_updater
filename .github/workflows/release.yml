@@ -31,7 +31,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          upload_url: ${{ github.event.release.upload_url }}
           files: ${{ steps.compile.outputs.BUILT_ARCHIVE }}
           asset_content_type: application/gzip
 
@@ -40,6 +39,5 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          upload_url: ${{ github.event.release.upload_url }}
           files: ${{ steps.compile.outputs.BUILT_CHECKSUM }}
           asset_content_type: text/plain
