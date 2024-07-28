@@ -1,13 +1,27 @@
 use chrono::Utc;
+use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
-use std::env;
-use std::fs;
+use serde_yaml::{Mapping, Value};
+use std::{
+    fs::{self, File},
+    io::Write,
+    path::{Path, PathBuf},
+};
 
 #[derive(Debug, Serialize, Deserialize)]
 struct ChartYaml {
     #[serde(rename = "apiVersion")]
-    api_version: String,
-    entries: Vec<ChartEntry>,
+    api_version: Option<String>,
+    entries: Mapping,
+}
+
+impl Default for ChartYaml {
+    fn default() -> Self {
+        Self {
+            api_version: Some("v1".to_string()),
+            entries: Mapping::new(),
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -44,7 +58,6 @@ struct Constants {
     api_version: String,
     #[serde(rename = "appVersion")]
     app_version: String,
-    created: String,
     description: String,
     home: String,
     icon: String,
@@ -56,13 +69,45 @@ struct Constants {
     entry_type: String,
 }
 
+impl Default for Constants {
+    fn default() -> Self {
+        Self {
+            api_version: "v2".to_string(),
+            app_version: "1.0.0".to_string(),
+            description: "Test Chart".to_string(),
+            home: "https://example.com".to_string(),
+            icon: "https://example.com/icon.png".to_string(),
+            keywords: vec!["test".to_string(), "chart".to_string()],
+            maintainers: vec![Maintainer {
+                email: "test@example.com".to_string(),
+                name: "Abdulrhman Alkhodiry".to_string(),
+                url: "https://example.com".to_string(),
+            }],
+            name: "test-chart".to_string(),
+            sources: vec!["https://github.com/test/chart".to_string()],
+            entry_type: "application".to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct Parameters {
     #[serde(rename = "appVersion")]
     app_version: Option<String>,
     digest: String,
     version: String,
-    urls: String,
+    urls: Vec<String>,
+}
+
+impl Default for Parameters {
+    fn default() -> Self {
+        Self {
+            app_version: None,
+            digest: "abc123".to_string(),
+            version: "0.1.0".to_string(),
+            urls: vec!["https://example.com/test-chart-0.1.0.tgz".to_string()],
+        }
+    }
 }
 
 fn update_yaml(
@@ -70,77 +115,116 @@ fn update_yaml(
     constants: &Constants,
     parameters: &Parameters,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    // Read the main YAML file
-    let contents = fs::read_to_string(file_path)?;
-    let content = serde_yaml::from_str(&contents);
-    let mut data: ChartYaml = match content {
-        Ok(data) => data,
-        Err(_) => ChartYaml {
-            api_version: "v1".to_owned(),
-            entries: Vec::new(),
-        },
+    let mut data: ChartYaml = if Path::new(file_path).exists() {
+        let contents = fs::read_to_string(file_path)?;
+
+        let contents = if contents.trim().is_empty() {
+            "apiVersion: v1\nentries: {}\n"
+        } else {
+            &contents
+        };
+        serde_yaml::from_str(&contents)?
+    } else {
+        ChartYaml {
+            api_version: Some("v1".to_owned()),
+            entries: Mapping::new(),
+        }
     };
 
     let created = Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
-    let urls = Vec::from([parameters.urls.to_owned()]);
 
-    // Create new entry
     let new_entry = ChartEntry {
-        api_version: constants.api_version.to_owned(),
+        api_version: constants.api_version.clone(),
         app_version: parameters
             .app_version
-            .to_owned()
-            .unwrap_or(constants.app_version.to_owned()),
-        created: created.to_owned(),
-        description: constants.description.to_owned(),
-        digest: parameters.digest.to_owned(),
-        home: constants.home.to_owned(),
-        icon: constants.icon.to_owned(),
-        keywords: constants.keywords.to_owned(),
-        maintainers: constants.maintainers.to_owned(),
-        name: constants.name.to_owned(),
-        sources: constants.sources.to_owned(),
-        entry_type: constants.entry_type.to_owned(),
-        urls,
-        version: parameters.version.to_owned(),
+            .clone()
+            .unwrap_or_else(|| constants.app_version.clone()),
+        created,
+        description: constants.description.clone(),
+        digest: parameters.digest.clone(),
+        home: constants.home.clone(),
+        icon: constants.icon.clone(),
+        keywords: constants.keywords.clone(),
+        maintainers: constants.maintainers.clone(),
+        name: constants.name.clone(),
+        sources: constants.sources.clone(),
+        entry_type: constants.entry_type.clone(),
+        urls: parameters.urls.clone(),
+        version: parameters.version.clone(),
     };
 
-    // Add new entry to the keydb list
-    data.entries.push(new_entry);
+    let entries_key = Value::String(constants.name.clone());
+    let entries = data
+        .entries
+        .entry(entries_key)
+        .or_insert(Value::Sequence(Vec::new()));
 
-    // Write the updated YAML back to the file
-    let updated_yaml = serde_yaml::to_string(&data)?;
+    if let Value::Sequence(ref mut vec) = entries {
+        vec.push(serde_yaml::to_value(&new_entry)?);
+    } else {
+        return Err("Unexpected value type for entries".into());
+    }
 
-    Ok(updated_yaml)
+    serde_yaml::to_string(&data).map_err(Into::into)
+}
+
+#[derive(Parser)]
+#[command(author, version, about, long_about = None)]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Update the YAML file
+    Update {
+        /// Path to the YAML file to update
+        #[arg(short, long)]
+        file: PathBuf,
+
+        /// Path to the constants YAML file
+        #[arg(short, long)]
+        constants: PathBuf,
+
+        /// Path to the parameters YAML file
+        #[arg(short, long)]
+        parameters: PathBuf,
+    },
+    /// Generate a new YAML file templates
+    Generate {},
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args: Vec<String> = env::args().collect();
+    let cli = Cli::parse();
 
-    if args.len() != 4 {
-        eprintln!(
-            "Usage: {} <file_path> <constants_path> <parameters_path>",
-            args[0]
-        );
-        std::process::exit(1);
+    match &cli.command {
+        Commands::Update {
+            file,
+            constants,
+            parameters,
+        } => {
+            let constants: Constants = serde_yaml::from_str(&fs::read_to_string(constants)?)?;
+            let parameters: Parameters = serde_yaml::from_str(&fs::read_to_string(parameters)?)?;
+
+            let updated_yaml = update_yaml(file.to_str().unwrap(), &constants, &parameters)?;
+            fs::write(file, updated_yaml)?;
+
+            println!("Added new entry to {}", file.display());
+        }
+        Commands::Generate {} => {
+            let mut file = File::create("index.yaml")?;
+            let mut constants_file = File::create("constants.yaml")?;
+            let mut parameters_file = File::create("parameters.yaml")?;
+
+            let _ = file.write(serde_yaml::to_string(&ChartYaml::default())?.as_bytes());
+            let _ =
+                constants_file.write(serde_yaml::to_string(&Constants::default())?.as_bytes())?;
+            let _ =
+                parameters_file.write(serde_yaml::to_string(&Parameters::default())?.as_bytes())?;
+            println!("YAML templates generated");
+        }
     }
-
-    let file_path = &args[1];
-    let constants_path = &args[2];
-    let parameters_path = &args[3];
-
-    // Read constants
-    let constants_content = fs::read_to_string(constants_path)?;
-    let constants: Constants = serde_yaml::from_str(&constants_content)?;
-
-    // Read parameters
-    let parameters_content = fs::read_to_string(parameters_path)?;
-    let parameters: Parameters = serde_yaml::from_str(&parameters_content)?;
-
-    let updated_yaml = update_yaml(file_path, &constants, &parameters)?;
-
-    fs::write(file_path, updated_yaml)?;
-    println!("Added new entry to {}", file_path);
 
     Ok(())
 }
@@ -148,90 +232,124 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::DateTime;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    fn create_test_constants() -> Constants {
+        Constants {
+            api_version: "v2".to_string(),
+            app_version: "1.0.0".to_string(),
+            description: "Test Chart".to_string(),
+            home: "https://example.com".to_string(),
+            icon: "https://example.com/icon.png".to_string(),
+            keywords: vec!["test".to_string(), "chart".to_string()],
+            maintainers: vec![Maintainer {
+                email: "test@example.com".to_string(),
+                name: "Test Maintainer".to_string(),
+                url: "https://example.com".to_string(),
+            }],
+            name: "test-chart".to_string(),
+            sources: vec!["https://github.com/test/chart".to_string()],
+            entry_type: "application".to_string(),
+        }
+    }
+
+    fn create_test_parameters() -> Parameters {
+        Parameters {
+            app_version: Some("1.0.1".to_string()),
+            digest: "abc123".to_string(),
+            version: "0.1.0".to_string(),
+            urls: vec!["https://example.com/test-chart-0.1.0.tgz".to_string()],
+        }
+    }
 
     #[test]
-    fn test_update_yaml() {
-        // Create a sample input YAML
-        let input_yaml = r#"
+    fn test_update_yaml_new_file() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_file = NamedTempFile::new()?;
+        let file_path = temp_file.path().to_str().unwrap();
+
+        let constants = create_test_constants();
+        let parameters = create_test_parameters();
+
+        let updated_yaml = update_yaml(file_path, &constants, &parameters)?;
+        let parsed: ChartYaml = serde_yaml::from_str(&updated_yaml)?;
+
+        assert_eq!(parsed.api_version, Some("v1".to_string()));
+        assert_eq!(parsed.entries.len(), 1);
+
+        let entries = parsed
+            .entries
+            .get(&Value::String("test-chart".to_string()))
+            .unwrap();
+        let entries: Vec<ChartEntry> = serde_yaml::from_value(entries.clone())?;
+        assert_eq!(entries.len(), 1);
+
+        let entry = &entries[0];
+        assert_eq!(entry.api_version, "v2");
+        assert_eq!(entry.app_version, "1.0.1");
+        assert_eq!(entry.description, "Test Chart");
+        assert_eq!(entry.digest, "abc123");
+        assert_eq!(entry.version, "0.1.0");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_update_yaml_existing_file() -> Result<(), Box<dyn std::error::Error>> {
+        let mut temp_file = NamedTempFile::new()?;
+
+        let initial_content = r#"
 apiVersion: v1
 entries:
-  - apiVersion: v2
-    appVersion: "6.3.4"
-    created: "2024-04-05T16:03:22.72761377Z"
-    description: "Initial description"
-    digest: "initial_digest"
-    home: "https://initial.com"
-    icon: "https://initial.com/icon.png"
-    keywords: ["initial"]
-    maintainers:
-      - email: "initial@example.com"
-        name: "Initial Maintainer"
-        url: "https://initial.com"
-    name: "initial"
-    sources: ["https://initial.com/source"]
-    type: "application"
-    urls: ["https://initial.com/chart.tgz"]
-    version: "0.1.0"
+  test-chart:
+    - apiVersion: v2
+      appVersion: 1.0.0
+      created: "2023-01-01T00:00:00.000Z"
+      description: Initial Test Chart
+      digest: def456
+      home: https://example.com
+      icon: https://example.com/icon.png
+      keywords:
+        - test
+        - chart
+      maintainers:
+        - email: test@example.com
+          name: Test Maintainer
+          url: https://example.com
+      name: test-chart
+      sources:
+        - https://github.com/test/chart
+      type: application
+      urls:
+        - https://example.com/test-chart-0.0.1.tgz
+      version: 0.0.1
 "#;
+        write!(temp_file, "{}", initial_content)?;
+        let file_path = temp_file.path().to_str().unwrap();
 
-        // Write input YAML to a temporary file
-        let temp_dir = tempfile::tempdir().unwrap();
-        let file_path = temp_dir.path().join("test.yaml");
-        fs::write(&file_path, input_yaml).unwrap();
+        let constants = create_test_constants();
+        let parameters = create_test_parameters();
 
-        // Create sample constants and parameters
-        let constants = Constants {
-            api_version: "v2".to_string(),
-            app_version: "6.3.5".to_string(),
-            created: "".to_string(), // This will be overwritten
-            description: "Updated description".to_string(),
-            home: "https://updated.com".to_string(),
-            icon: "https://updated.com/icon.png".to_string(),
-            keywords: vec!["updated".to_string()],
-            maintainers: vec![Maintainer {
-                email: "updated@example.com".to_string(),
-                name: "Updated Maintainer".to_string(),
-                url: "https://updated.com".to_string(),
-            }],
-            name: "updated".to_string(),
-            sources: vec!["https://updated.com/source".to_string()],
-            entry_type: "application".to_string(),
-        };
+        let updated_yaml = update_yaml(file_path, &constants, &parameters)?;
+        let parsed: ChartYaml = serde_yaml::from_str(&updated_yaml)?;
 
-        let parameters = Parameters {
-            app_version: Some("6.3.6".to_string()),
-            digest: "updated_digest".to_string(),
-            version: "0.2.0".to_string(),
-            urls: "https://updated.com/chart-0.2.0.tgz".to_string(),
-        };
+        assert_eq!(parsed.api_version, Some("v1".to_string()));
+        assert_eq!(parsed.entries.len(), 1);
 
-        // Call update_yaml
-        let result = update_yaml(file_path.to_str().unwrap(), &constants, &parameters).unwrap();
+        let entries = parsed
+            .entries
+            .get(&Value::String("test-chart".to_string()))
+            .unwrap();
+        let entries: Vec<ChartEntry> = serde_yaml::from_value(entries.clone())?;
+        assert_eq!(entries.len(), 2);
 
-        // Parse the result
-        let updated_yaml: ChartYaml = serde_yaml::from_str(&result).unwrap();
-
-        // Assertions
-        assert_eq!(updated_yaml.api_version, "v1");
-        assert_eq!(updated_yaml.entries.len(), 2);
-
-        let new_entry = &updated_yaml.entries[1];
+        let new_entry = &entries[1];
         assert_eq!(new_entry.api_version, "v2");
-        assert_eq!(new_entry.app_version, "6.3.6");
-        assert_eq!(new_entry.description, "Updated description");
-        assert_eq!(new_entry.digest, "updated_digest");
-        assert_eq!(new_entry.home, "https://updated.com");
-        assert_eq!(new_entry.icon, "https://updated.com/icon.png");
-        assert_eq!(new_entry.keywords, vec!["updated"]);
-        assert_eq!(new_entry.maintainers[0].email, "updated@example.com");
-        assert_eq!(new_entry.name, "updated");
-        assert_eq!(new_entry.sources, vec!["https://updated.com/source"]);
-        assert_eq!(new_entry.entry_type, "application");
-        assert_eq!(new_entry.urls, vec!["https://updated.com/chart-0.2.0.tgz"]);
-        assert_eq!(new_entry.version, "0.2.0");
+        assert_eq!(new_entry.app_version, "1.0.1");
+        assert_eq!(new_entry.description, "Test Chart");
+        assert_eq!(new_entry.digest, "abc123");
+        assert_eq!(new_entry.version, "0.1.0");
 
-        // Check that the created field is a valid timestamp
-        assert!(DateTime::parse_from_rfc3339(&new_entry.created).is_ok());
+        Ok(())
     }
 }

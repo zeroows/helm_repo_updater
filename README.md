@@ -21,6 +21,15 @@ To use this application, you need to provide:
 
 Example:
 
+to update a file `index.yaml` with constants from `constants.yaml` and
+parameters from `parameters.yaml`:
+
 ```bash
-cargo run -- path/to/chart.yaml path/to/constants.yaml path/to/parameters.yaml
+helm_repo_updater update --file index.yaml --constants constants.yaml --parameters parameters.yaml
+```
+
+to generate a template for the files needed
+
+```bash
+helm_repo_updater generate
 ```
