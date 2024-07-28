@@ -1,9 +1,7 @@
-name: Master
-
+name: Build and release
 on:
   release:
-    types:
-      - published
+    types: [created]
 
 jobs:
   release:
@@ -18,10 +16,19 @@ jobs:
       - uses: actions/checkout@master
       
       - name: Compile and release
+        id: compile
         uses: rust-build/rust-build.action@v1.4.5
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          UPLOAD_MODE: "release"
+          UPLOAD_MODE: none
         with:
           RUSTTARGET: ${{ matrix.target }}
           EXTRA_FILES: "README.md LICENSE"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Binary
+          path: |
+            ${{ steps.compile.outputs.BUILT_ARCHIVE }}
+            ${{ steps.compile.outputs.BUILT_CHECKSUM }}
